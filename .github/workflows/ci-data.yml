@@ -1,67 +1,51 @@
 name: GCS Insert
-
-on:
+'on':
   schedule:
-    - cron: "0 1 * * *"
-  workflow_dispatch:
-
+  - cron: 0 1 * * *
+  workflow_dispatch: null
 jobs:
   gcs_insert:
-    if: github.repository_owner == 'ibis-project'
+    if: github.repository_owner == 'playground-nils'
     runs-on: ubuntu-latest
-
-    # this allows extractions/setup-just to list releases for `just` at a higher
-    # rate limit while restricting GITHUB_TOKEN permissions elsewhere
     permissions:
-      contents: "read"
-      # required for GCP workload identity federation
-      id-token: "write"
-
+      contents: read
+      id-token: write
     steps:
-      - name: set date
-        id: set_date
-        run: |
-          set -euo pipefail
+    - name: set date
+      id: set_date
+      run: 'set -euo pipefail
 
-          echo "yesterday=$(date --date=yesterday +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
-      - name: generate data
-        id: generate_data
-        run: |
-          set -euo pipefail
+        echo "yesterday=$(date --date=yesterday +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
-          yesterday="${{ steps.set_date.outputs.yesterday }}"
+        '
+    - name: generate data
+      id: generate_data
+      run: "set -euo pipefail\n\nyesterday=\"${{ steps.set_date.outputs.yesterday\
+        \ }}\"\n\n[ -n \"$yesterday\" ] || exit 1\n\nseconds_per_hour=3600\nrequests_per_hour=1000\n\
+        rate_limit_sleep=\"$(bc <<< \"scale = 1; $seconds_per_hour / $requests_per_hour\"\
+        \ | xargs printf \"%.0f\")\"\n\ngh api --paginate \"repos/ibis-project/ibis/actions/runs?per_page=100&created=${yesterday}\"\
+        \ --jq '.workflow_runs[]' > workflows.json\n\njq -rcM '.id' < workflows.json\
+        \ | while read -r run_id; do\n  gh api --paginate \"repos/ibis-project/ibis/actions/runs/${run_id}/jobs?per_page=100\"\
+        \ --jq '.jobs[]' >> jobs.json\n  # sleep to avoid rate limiting\n  sleep \"\
+        $rate_limit_sleep\"\ndone\n"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: google-github-actions/auth@v3
+      with:
+        project_id: ibis-gbq
+        workload_identity_provider: ${{ vars.WIF_PROVIDER_NAME }}
+    - uses: google-github-actions/setup-gcloud@v3
+    - run: gcloud info
+    - name: copy to gcs
+      run: 'set -euo pipefail
 
-          [ -n "$yesterday" ] || exit 1
 
-          seconds_per_hour=3600
-          requests_per_hour=1000
-          rate_limit_sleep="$(bc <<< "scale = 1; $seconds_per_hour / $requests_per_hour" | xargs printf "%.0f")"
+        yesterday="${{ steps.set_date.outputs.yesterday }}"
 
-          gh api --paginate "repos/ibis-project/ibis/actions/runs?per_page=100&created=${yesterday}" --jq '.workflow_runs[]' > workflows.json
 
-          jq -rcM '.id' < workflows.json | while read -r run_id; do
-            gh api --paginate "repos/ibis-project/ibis/actions/runs/${run_id}/jobs?per_page=100" --jq '.jobs[]' >> jobs.json
-            # sleep to avoid rate limiting
-            sleep "$rate_limit_sleep"
-          done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        bucket="gs://ibis-workflow-data/${yesterday}"
 
-      - uses: google-github-actions/auth@v3
-        with:
-          project_id: "ibis-gbq"
-          workload_identity_provider: "${{ vars.WIF_PROVIDER_NAME }}"
+        gsutil cp -Z workflows.json jobs.json "${bucket}"
 
-      - uses: google-github-actions/setup-gcloud@v3
-
-      - run: gcloud info
-
-      - name: copy to gcs
-        run: |
-          set -euo pipefail
-
-          yesterday="${{ steps.set_date.outputs.yesterday }}"
-
-          bucket="gs://ibis-workflow-data/${yesterday}"
-          gsutil cp -Z workflows.json jobs.json "${bucket}"
+        '
