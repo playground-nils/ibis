@@ -1,33 +1,30 @@
 name: Nix
-
-on:
+'on':
   push:
     paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "**/*.qmd"
-      - ".envrc"
+    - docs/**
+    - '**/*.md'
+    - '**/*.qmd'
+    - .envrc
     branches:
-      - main
-      - "*.x.x"
+    - main
+    - '*.x.x'
   pull_request:
     paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - "**/*.qmd"
-      - ".envrc"
+    - docs/**
+    - '**/*.md'
+    - '**/*.qmd'
+    - .envrc
     branches:
-      - main
-      - "*.x.x"
-  merge_group:
-
+    - main
+    - '*.x.x'
+  merge_group: null
 concurrency:
-  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
+  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow
+    }}
   cancel-in-progress: true
-
 permissions:
   contents: read
-
 jobs:
   nix:
     runs-on: ${{ matrix.os }}
@@ -36,56 +33,51 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest # x86_64-linux
-          - ubuntu-24.04-arm # aarch64-linux
-          - macos-15 # aarch64-darwin
+        - ubuntu-latest
+        - ubuntu-latest
+        - macos-15
         python-version:
-          - "3.10"
-          - "3.14"
+        - '3.10'
+        - '3.14'
     steps:
-      - name: checkout
-        uses: actions/checkout@v6
+    - name: checkout
+      uses: actions/checkout@v6
+    - name: install nix
+      uses: cachix/install-nix-action@v31
+      with:
+        nix_path: nixpkgs=channel:nixos-unstable-small
+        extra_nix_config: 'access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
-      - name: install nix
-        uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable-small
-          extra_nix_config: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+          '
+    - name: setup cachix
+      uses: cachix/cachix-action@v16
+      with:
+        name: ibis
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        extraPullNames: nix-community
+    - name: nix build environment
+      run: 'set -euo pipefail
 
-      - name: setup cachix
-        uses: cachix/cachix-action@v16
-        with:
-          name: ibis
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          extraPullNames: nix-community
 
-      - name: nix build environment
-        run: |
-          set -euo pipefail
+        version=''${{ matrix.python-version }}''
 
-          version='${{ matrix.python-version }}'
-          nix build ".#ibis${version//./}" --fallback --keep-going --print-build-logs
+        nix build ".#ibis${version//./}" --fallback --keep-going --print-build-logs
 
-      - name: nix test
-        timeout-minutes: 60
-        run: |
-          set -euo pipefail
+        '
+    - name: nix test
+      timeout-minutes: 60
+      run: 'set -euo pipefail
 
-          version='${{ matrix.python-version }}'
-          nix build ".#ibis${version//./}.passthru.tests.pytest" --fallback --keep-going --print-build-logs
 
-      - name: nix build devShell
-        run: |
-          set -euo pipefail
+        version=''${{ matrix.python-version }}''
 
-          version='${{ matrix.python-version }}'
-          host_system="$(nix eval --raw 'nixpkgs#stdenv.hostPlatform.system')"
-          flake=".#devShells.${host_system}.ibis${version//./}"
+        nix build ".#ibis${version//./}.passthru.tests.pytest" --fallback --keep-going
+        --print-build-logs
 
-          args=("--fallback" "--keep-going" "--print-build-logs")
-          if [[ "${{ github.event_name }}" != "push" ]]; then
-            args+=("--dry-run")
-          fi
-
-          nix build "$flake" "${args[@]}"
+        '
+    - name: nix build devShell
+      run: "set -euo pipefail\n\nversion='${{ matrix.python-version }}'\nhost_system=\"\
+        $(nix eval --raw 'nixpkgs#stdenv.hostPlatform.system')\"\nflake=\".#devShells.${host_system}.ibis${version//./}\"\
+        \n\nargs=(\"--fallback\" \"--keep-going\" \"--print-build-logs\")\nif [[ \"\
+        ${{ github.event_name }}\" != \"push\" ]]; then\n  args+=(\"--dry-run\")\n\
+        fi\n\nnix build \"$flake\" \"${args[@]}\"\n"
